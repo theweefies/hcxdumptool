@@ -29,6 +29,8 @@
 #define HCX_NMEA0183_PCAPNG		26
 #define HCX_RCASCAN			27
 #define HCX_RD_SORT			28
+#define HCX_TGT_BSSID       'b'
+#define HCX_CLIENT_MAC      'a'
 #define HCX_IFNAME			'i'
 #define HCX_PCAPNGNAME			'w'
 #define HCX_INTERFACE_INFO		'I'

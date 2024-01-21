@@ -32,6 +32,7 @@
 #include <sys/mman.h>
 #include <sys/time.h>
 #include <sys/timerfd.h>
+#include <ctype.h>
 #if defined (_POSIX_VERSION)
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -378,6 +379,83 @@ static char gptxt[NMEA_MSG_MAX] = { 0 };
 
 static char rtb[RTD_LEN] = { 0 };
 /*===========================================================================*/
+int tgt_bssid = 0;
+char *target_bssid;
+char *client_mac;
+uint8_t client_mac_bytes[8];
+
+// Function to validate a MAC address
+int isValidMACAddress(const char *mac) {
+    int i = 0, s = 0;
+
+    for (i = 0; mac[i] != '\0'; i++) {
+        if ((i % 3 == 2 && mac[i] != ':') || (i % 3 != 2 && !isxdigit(mac[i]))) {
+            return 0; // Invalid MAC
+        }
+        if (i % 3 != 2) s++;
+    }
+
+    return s == 12 && i == 17; // Valid MAC has 12 hex digits and 5 colons
+}
+
+// Function to convert MAC address string to byte array
+int convertMACToBytes(const char *mac_str, uint8_t *mac_bytes) {
+    if (!isValidMACAddress(mac_str)) {
+        return -1; // Invalid MAC address
+    }
+
+    for (int i = 0; i < 6; i++) {
+        unsigned int byte;
+        sscanf(mac_str + 3 * i, "%2x", &byte);
+        mac_bytes[i] = (uint8_t)byte;
+    }
+
+    return 0; // Success
+}
+
+int checkBPF(void) {
+	// Check if the file mac.bpf exists and has content
+    FILE *file = fopen("mac.bpf", "r");
+    if (file) {
+        fseek(file, 0, SEEK_END);
+        long size = ftell(file);
+        fclose(file);
+
+        if (size <= 0) {
+            fprintf(stderr, "BPF file creation unsuccessful.\n");
+			return -1;
+        }
+
+    } else {
+        printf("Failed to open the file mac.bpf. It may not exist.\n");
+		return -1;
+    }
+
+    return 0;
+}
+
+int createBPF(char *mac) {
+	char command[512];
+
+	if (!(isValidMACAddress(mac))) {
+		fprintf(stderr, "BSSID MAC %s is not valid.\n", mac);
+		return -1;
+	}
+
+    // Construct the command
+    sprintf(command, "sudo tcpdump -n -i %s wlan addr1 %s or wlan addr2 %s or \"(wlan addr3 %s) and (not type ctl subtype ack and not type ctl subtype rts and not type ctl subtype cts)\" -ddd > mac.bpf", ifaktname, mac, mac, mac);
+
+    // Execute the command
+    if (system(command) == 0) {
+		if (checkBPF() < 0) {
+			return -1;
+		}
+	} else {
+		return -1;
+	}
+
+	return 0;
+}
 /*===========================================================================*/
 /* status print */
 static void show_interfacecapabilities2(void)
@@ -4286,6 +4364,14 @@ macaprghidden[3] = (nicaprg >> 16) & 0xff;
 macaprghidden[2] = ouiaprg & 0xff;
 macaprghidden[1] = (ouiaprg >> 8) & 0xff;
 macaprghidden[0] = (ouiaprg >> 16) & 0xff;
+printf("macaprghidden: ");
+for (int i = 0; i < 6; i++) {
+    printf("%02x", macaprghidden[i]);
+    if (i < 5) {
+        printf(":");
+    }
+}
+printf("\n");
 nicaprg++;
 macaprg[5] = nicaprg & 0xff;
 macaprg[4] = (nicaprg >> 8) & 0xff;
@@ -4293,16 +4379,35 @@ macaprg[3] = (nicaprg >> 16) & 0xff;
 macaprg[2] = ouiaprg & 0xff;
 macaprg[1] = (ouiaprg >> 8) & 0xff;
 macaprg[0] = (ouiaprg >> 16) & 0xff;
-ouiclientrg = (vendorclientrg[rand() % ((VENDORCLIENTRG_SIZE / sizeof(int)))]) &0xffffff;
-nicclientrg = rand() & 0xffffff;
-macclientrg[7] = 0;
-macclientrg[6] = 0;
-macclientrg[5] = nicclientrg & 0xff;
-macclientrg[4] = (nicclientrg >> 8) & 0xff;
-macclientrg[3] = (nicclientrg >> 16) & 0xff;
-macclientrg[2] = ouiclientrg & 0xff;
-macclientrg[1] = (ouiclientrg >> 8) & 0xff;
-macclientrg[0] = (ouiclientrg >> 16) & 0xff;
+printf("macaprg: ");
+for (int i = 0; i < 6; i++) {
+    printf("%02x", macaprg[i]);
+    if (i < 5) {
+        printf(":");
+    }
+}
+printf("\n");
+if (client_mac == NULL) {
+	ouiclientrg = (vendorclientrg[rand() % ((VENDORCLIENTRG_SIZE / sizeof(int)))]) &0xffffff;
+	nicclientrg = rand() & 0xffffff;
+	macclientrg[7] = 0;
+	macclientrg[6] = 0;
+	macclientrg[5] = nicclientrg & 0xff;
+	macclientrg[4] = (nicclientrg >> 8) & 0xff;
+	macclientrg[3] = (nicclientrg >> 16) & 0xff;
+	macclientrg[2] = ouiclientrg & 0xff;
+	macclientrg[1] = (ouiclientrg >> 8) & 0xff;
+	macclientrg[0] = (ouiclientrg >> 16) & 0xff;
+} else {
+	macclientrg[0] = client_mac_bytes[0];
+	macclientrg[1] = client_mac_bytes[1];
+	macclientrg[2] = client_mac_bytes[2];
+	macclientrg[3] = client_mac_bytes[3];
+	macclientrg[4] = client_mac_bytes[4];
+	macclientrg[5] = client_mac_bytes[5];
+	macclientrg[6] = 0;
+	macclientrg[7] = 0;
+}
 strncpy(weakcandidate, WEAKCANDIDATEDEF, PSK_MAX);
 replaycountrg = (rand() % 0xfff) + 0xf000;
 eapolm1data[0x17] = (replaycountrg >> 8) &0xff;
@@ -4726,6 +4831,8 @@ fprintf(stdout, "%s %s  (C) %s ZeroBeat\n"
 	"                   band e: NL80211_BAND_S1GHZ (902 MHz)\n"
 	#endif
 	"                  to disable frequency management, set this option to a single frequency/channel\n"
+	"-b <mac>       : set bssid for targeted session; creates bpf for you.\n"
+	"                 also use --bssid <mac>\n"
 	"-f <digit>     : set frequency (2412,2417,5180,...)\n"
 	"-F             : use available frequencies from INTERFACE\n"
 	"-t <second>    : minimum stay time (will increase on new stations and/or authentications)\n"
@@ -4896,7 +5003,7 @@ static char *nmeaoutname = NULL;
 #endif
 static const char *rebootstring = "reboot";
 static const char *poweroffstring = "poweroff";
-static const char *short_options = "i:w:c:f:m:I:t:FLlAhHv";
+static const char *short_options = "i:w:c:f:m:I:t:FLlAhHvb:a:";
 static struct tpacket_stats lStats = { 0 };
 static socklen_t lStatsLength = sizeof(lStats);
 static const struct option long_options[] =
@@ -4932,6 +5039,8 @@ static const struct option long_options[] =
 	{"gpio_button",			required_argument,	NULL,	HCX_GPIO_BUTTON},
 	{"gpio_statusled",		required_argument,	NULL,	HCX_GPIO_STATUSLED},
 	{"rcascan",			required_argument,	NULL,	HCX_RCASCAN},
+	{"bssid",			required_argument, NULL, HCX_TGT_BSSID},
+	{"client-mac",		required_argument, NULL, HCX_CLIENT_MAC},
 	#ifdef HCXSTATUSOUT
 	{"rds",				required_argument,	NULL,	HCX_RD_SORT},
 	#endif
@@ -4982,6 +5091,28 @@ while((auswahl = getopt_long(argc, argv, short_options, long_options, &index)) !
 
 		case HCX_SET_SCANLIST_FROM_USER_CH:
 		userchannellistname = optarg;
+		break;
+
+		case HCX_TGT_BSSID:
+		target_bssid = optarg;
+		if (createBPF(target_bssid) < 0) {
+			fprintf(stderr, "BPF creation failed for bssid %s\n", optarg);
+			exit(EXIT_FAILURE);
+		}
+		tgt_bssid = true;
+		bpfname = "mac.bpf";
+		break;
+
+		case HCX_CLIENT_MAC:
+		client_mac = optarg;
+		if (!(isValidMACAddress(client_mac))) {
+			fprintf(stderr, "Client MAC %s is not a valid MAC address.\n", client_mac);
+			exit(EXIT_FAILURE);
+		}
+		if ((convertMACToBytes(client_mac, client_mac_bytes)) < 0) {
+			fprintf(stderr, "Conversion of MAC %sto bytes failed.\n", client_mac);
+			exit(EXIT_FAILURE);
+		}
 		break;
 
 		case HCX_ESSIDLIST:
@@ -5400,6 +5531,8 @@ fprintf(stdout, "\nThis is a highly experimental penetration testing tool!\n"
 		"It is made to detect vulnerabilities in your NETWORK mercilessly!\n\n");
 if(vmflag == false) fprintf(stdout, "Failed to set virtual MAC!\n");
 if(bpf.len == 0) fprintf(stderr, "BPF is unset! Make sure hcxdumptool is running in a 100%% controlled environment!\n\n");
+if(tgt_bssid) fprintf(stderr, "Targeting mode for AP BSSID (%s) active!\n\n", target_bssid);
+if(client_mac) fprintf(stderr, "Client MAC set to %s\n\n", client_mac);
 fprintf(stdout, "Initialize main scan loop...\033[?25l");
 nanosleep(&tspecifo, &tspeciforem);
 if(rcascanflag == NULL)

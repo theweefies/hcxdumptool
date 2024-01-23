@@ -443,7 +443,7 @@ int createBPF(char *mac) {
 	}
 
     // Construct the command
-    sprintf(command, "sudo tcpdump -n -i %s wlan addr1 %s or wlan addr2 %s or \"(wlan addr3 %s) and (not type ctl subtype ack and not type ctl subtype rts and not type ctl subtype cts)\" -ddd > mac.bpf", ifaktname, mac, mac, mac);
+    sprintf(command, "sudo tcpdump -s 1024 -y IEEE802_11_RADIO -i %s wlan addr1 %s or wlan addr2 %s or \"(wlan addr3 %s) and (not type ctl subtype ack and not type ctl subtype rts and not type ctl subtype cts)\" -ddd > mac.bpf", ifaktname, mac, mac, mac);
 
     // Execute the command
     if (system(command) == 0) {
@@ -5095,12 +5095,6 @@ while((auswahl = getopt_long(argc, argv, short_options, long_options, &index)) !
 
 		case HCX_TGT_BSSID:
 		target_bssid = optarg;
-		if (createBPF(target_bssid) < 0) {
-			fprintf(stderr, "BPF creation failed for bssid %s\n", optarg);
-			exit(EXIT_FAILURE);
-		}
-		tgt_bssid = true;
-		bpfname = "mac.bpf";
 		break;
 
 		case HCX_CLIENT_MAC:
@@ -5361,7 +5355,8 @@ while((auswahl = getopt_long(argc, argv, short_options, long_options, &index)) !
 		default:
 		usageerror(basename(argv[0]));
 		}
-	}
+	}	
+
 setbuf(stdout, NULL);
 hcxpid = getpid();
 #ifdef HCXDEBUG
@@ -5483,6 +5478,16 @@ if(monitormodeflag == true)
 			}
 		}
 	goto byebye;
+	}
+if (target_bssid != NULL)
+	{
+	if (createBPF(target_bssid) < 0) 
+		{
+		fprintf(stderr, "BPF creation failed for bssid %s\n", optarg);
+		exit(EXIT_FAILURE);
+		}
+	tgt_bssid = true;
+	bpfname = "mac.bpf";
 	}
 if(essidlistname != NULL) read_essidlist(essidlistname);
 if(rcascanflag == NULL)
